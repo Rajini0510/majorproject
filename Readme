@@ -1,0 +1,228 @@
+# A Unified Multi-Modal System for Image Forgery, Text Plagiarism, and AI-Generated Content Detection
+
+A digital forensics web platform built on Django. It combines **Dual-Stream Vision Transformer (ViT-B/16) + DenseNet-121** (with Error Level Analysis) for image tampering localization and **RAG-based Semantic Vector Retrieval (ChromaDB + SentenceTransformers) + Local LLM Attribution** for academic plagiarism verification.
+
+---
+
+## 1. System Architecture & Workflows
+
+### Text Plagiarism Detection (RAG Pipeline)
+
+```
+Uploaded Document (.PDF / .TXT)
+   │
+   ▼
+[PyMuPDF Multi-Column Block Sorting]
+   │
+   ▼
+[Sentence Splitter & Text Normalization]
+   │
+   ▼
+[all-MiniLM-L6-v2 Embeddings] (users/models/sentence_transformer_model/)
+   │
+   ▼
+[ChromaDB Persistent Vector Search] (users/chroma_db/ vs. users/data/ieee_papers/)
+   │
+   ├─► Cosine Distance < 0.35 (Similarity >= 65%) ──► Flag Match
+   │
+   ▼
+[Ollama Qwen 2.5 LLM Attribution Engine]
+   │
+   ▼
+Dynamic PDF Report Generation (ReportLab) + SQLite History Log
+
+```
+
+### Image Forgery Detection (Dual-Stream Pipeline)
+
+```
+Uploaded Image (.JPG / .PNG / .TIF)
+   │
+   ├─► Stream 1: RGB Image ────────────► ViT-B/16 (Global Semantic Context)
+   │                                           │
+   ├─► Stream 2: ELA (Residual Map) ───► DenseNet-121 (Compression Noise Artifacts)
+   │                                           │
+   ▼                                           ▼
+[Cross-Attention Multi-Head Fusion + Squeeze-and-Excitation (SE)]
+   │
+   ▼
+Binary Classification Head (Authentic vs. Tampered Probability)
+   │
+   ▼
+Explainable Forensic Diagnostic + Side-by-Side ELA Visualizer
+
+```
+
+---
+
+## 2. Directory Layout
+
+Verify your project layout matches the structure below before running on a new machine:
+
+```text
+App/
+├── manage.py
+├── db.sqlite3
+├── static/                                 <-- Static assets directory
+│
+├── model/                                  <-- Image Forgery PyTorch Weights
+│   ├── vit_densenet_forgery_detector.pth   <-- Ensure this .pth file is placed here
+│   ├── model_metadata.json
+│   └── test_metadata.csv
+│
+├── Templates/
+│   └── users/
+│       ├── userimageforgery.html           <-- Image Scanner UI & ELA Viewer
+│       ├── forgery_history.html            <-- Paginated Image History Table
+│       ├── userplagrism.html               <-- Text Scanner UI & PDF Downloader
+│       └── plagiarism_history.html         <-- Paginated Plagiarism History Table
+│
+├── unifiedmodel/
+│   ├── settings.py
+│   ├── urls.py
+│   └── wsgi.py
+│
+└── users/
+    ├── apps.py                             <-- Server startup hook
+    ├── models.py                           <-- PlagiarismCheck & ImageForgeryCheck schemas
+    ├── urls.py                             <-- App routing
+    ├── views.py                            <-- Controller endpoints & PDF handlers
+    │
+    ├── data/
+    │   └── ieee_papers/                    <-- Reference IEEE base papers (*.pdf)
+    │
+    ├── chroma_db/                          <-- Persistent ChromaDB vector index
+    │
+    ├── models/                             <-- Local Model Storage Cache
+    │   ├── sentence_transformer_model/     <-- MiniLM weights (auto-saved)
+    │   └── ollama_models/                  <-- Ollama GGUF storage (auto-routed)
+    │
+    └── services/
+        ├── indexer_service.py              <-- PyMuPDF extraction & ChromaDB vectorizer
+        ├── rag_detector.py                 <-- Sentence search & similarity scoring
+        ├── ollama_service.py               <-- Qwen 2.5 local reasoning & attribution
+        ├── forgery_detector.py             <-- Dual-Stream PyTorch inference & ELA
+        └── report_generator.py             <-- ReportLab PDF document compiler
+
+```
+
+---
+
+## 3. Installation & Setup
+
+### Step 1: Clone / Copy Project & Create Virtual Environment
+
+```bash
+# Windows (PowerShell)
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+
+# Linux / macOS
+python3 -m venv venv
+source venv/bin/activate
+
+```
+
+### Step 2: Install Dependencies
+
+```bash
+pip install django torch torchvision torchaudio sentence-transformers chromadb pymupdf nltk reportlab ollama pillow numpy matplotlib
+
+```
+
+### Step 3: Configure Ollama (Local LLM Reasoning)
+
+1. Download and install Ollama from [ollama.com/download](https://ollama.com/download).
+2. Start the Ollama background daemon:
+```bash
+ollama serve
+
+```
+
+
+3. Pull the Qwen model (optional; the Django startup hook will download it automatically if `ollama serve` is active):
+```bash
+ollama pull qwen2.5:7b
+
+```
+
+
+
+### Step 4: Run Migrations & Launch Server
+
+```bash
+python manage.py makemigrations users
+python manage.py migrate
+python manage.py runserver
+
+```
+
+---
+
+## 4. Maintenance & Reset Commands
+
+### Reset & Rebuild ChromaDB Vector Index
+
+Run this if reference papers in `users/data/ieee_papers/` are modified, deleted, or corrupted:
+
+```powershell
+# Windows (PowerShell)
+Remove-Item -Recurse -Force "users\chroma_db"
+
+# Linux / macOS
+rm -rf users/chroma_db
+
+```
+
+*Restarting `python manage.py runserver` will re-index all papers with layout sorting.*
+
+### Force Re-download of SentenceTransformer Weights
+
+```powershell
+# Windows (PowerShell)
+Remove-Item -Recurse -Force "users\models\sentence_transformer_model"
+
+# Linux / macOS
+rm -rf users/models/sentence_transformer_model
+
+```
+
+---
+
+## 5. Troubleshooting & Debugging Guide
+
+| Issue / Error Message | Root Cause | Fix / Resolution |
+| --- | --- | --- |
+| `[Errno 2] No such file or directory` during paper indexing | **Windows 260-Character `MAX_PATH` Limit**.<br>
+
+<br>Long file titles in deep paths exceed Windows API limits. | `to_windows_long_path()` in `indexer_service.py` prepends `\\?\` to bypass path length limits. Ensure all file operations pass through this helper. |
+| `[Ollama Note] Failed to connect to Ollama` | **Ollama Daemon Offline**.<br>
+
+<br>The background service is not running. | Run `ollama serve` in a background terminal. The system automatically falls back to vector similarity scoring if Ollama is unreachable. |
+| `FileNotFoundError: model/vit_densenet_forgery_detector.pth` | **Missing Checkpoint Path**.<br>
+
+<br>Weights are missing or misplaced. | Ensure `vit_densenet_forgery_detector.pth` is placed in `App/model/` (the root model folder, not `App/users/models/`). |
+| Low similarity score (e.g., 40%) on an identical document | **Layout Fragmentation**.<br>
+
+<br>Standard `pypdf` reading two-column papers line-by-line. | Use `pymupdf` with `get_text("blocks", sort=True)` (already implemented in `indexer_service.py` and `views.py`). Wipe `users/chroma_db` once to rebuild. |
+| `An embedding function already exists... Embedding function conflict` | **ChromaDB Metadata Mismatch**.<br>
+
+<br>Embedding function changed without resetting cache. | Delete `users/chroma_db/` and run `python manage.py runserver` to recreate the collection. |
+| `WARNINGS: ?: (staticfiles.W004) directory .../static does not exist` | **Missing Static Folder** | Run `mkdir static` in the root `App/` directory. |
+| `Torch CUDA out of memory` / `Device Assertion Error` | **VRAM Exhaustion**.<br>
+
+<br>GPU lacks dedicated memory for dual-stream batch inference. | The script defaults to CPU if CUDA is unavailable. Force CPU fallback in `users/services/forgery_detector.py` by setting `device = torch.device("cpu")`. |
+| `PermissionError: [WinError 32] The process cannot access the file` | **File Locking**.<br>
+
+<br>A running Python process or SQLite database instance locked the vector files. | Stop all running Django servers and kill background tasks via PowerShell: `Get-Process python | Stop-Process -Force`. |
+
+---
+
+## 6. End-to-End Testing Checklist
+
+* [ ] `[http://127.0.0.1:8000/userplagrism/](http://127.0.0.1:8000/userplagrism/)` loads properly.
+* [ ] Scanning a passage from an indexed IEEE paper flags high plagiarism ($>90\%$).
+* [ ] Clicking **Download Full Forensic Report (PDF)** downloads a generated ReportLab PDF.
+* [ ] `[http://127.0.0.1:8000/plagiarism-history/](http://127.0.0.1:8000/plagiarism-history/)` lists past scans with working pagination.
+* [ ] `[http://127.0.0.1:8000/userimageforgery/](http://127.0.0.1:8000/userimageforgery/)` displays RGB and ELA images side-by-side.
+* [ ] `[http://127.0.0.1:8000/forgery-history/](http://127.0.0.1:8000/forgery-history/)` logs all past image authenticity checks.
